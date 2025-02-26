@@ -6,42 +6,43 @@ source ~/.zshrc
 # shwordsplit オプションを有効化（zshのみ）
 # setopt shwordsplit
 
-# 引数 =========================================================================
+# 引数 =======================================================
 # $1 = ファイルパス
 # $2 = 何GBごとに分割するか（例：4.8 とすると4.8GB）
 
 INPUT="$1"
 SPLIT_SIZE="$2"
 
-# 引数の分解
+# ファイル引数の分解
 readonly FILE="$1"
 readonly DIR="${FILE%/*}"
 readonly BASE="${FILE##*/}"
 readonly EXT="${FILE##*.}"
 readonly STEM="${FILE%.*}"
-echo -e "file=${FILE}\ndir=${DIR}\nbase=${BASE}\next=${EXT}\nstem=${STEM}"
+echo -e "F=${FILE}\nD=${DIR}\nB=${BASE}\nE=${EXT}\nS=${STEM}"
 
-################################################################################
+##############################################################
 # 動画ファイルのタイムコードを取得する関数
 # Globals:
 # Arguments:
 #   $1: ファイルパス
 # Outputs:
 #   タイムコード（例：12:28:33;42）
-################################################################################
+##############################################################
 fn_get_timecode() {
   local file="$1"
   # ffprobeで元のタイムコードを取得
   local timecode
   timecode=$(ffprobe -v error -select_streams v:0 \
-    -show_entries stream_tags=timecode -of default=nw=1:nk=1 "${file}")
+    -show_entries stream_tags=timecode \
+    -of default=nw=1:nk=1 "${file}")
   echo "${timecode}"
 }
 TIMECODE=$(fn_get_timecode "$INPUT")
 echo "元のタイムコード: ${TIMECODE}"
 
 
-################################################################################
+##############################################################
 # HH:MM:SS:FF形式の文字列を秒に変換する関数
 # Globals:
 # Arguments:
@@ -49,48 +50,53 @@ echo "元のタイムコード: ${TIMECODE}"
 #   $2: FPS
 # Outputs:
 #   FPS（整数）
-################################################################################
+##############################################################
 fn_time2sec() {
+  local time="$1"
+  local fps="$2"
 
-  local old_ifs=$IFS
-  IFS=":;" read -r hour minute second frame <<< "$1"
+  IFS=":;" read -r hh mm ss ff <<< "$time"
 
-  if [ -z "$frame" ]; then
-    frame=0
+  if [ -z "$ff" ]; then
+    ff=0
   fi
   local total
-  total=$(echo "$hour*3600 + $minute*60 + $second + $frame/$FRAMERATE" | bc -l)
-  IFS=$old_ifs
+  total=$(echo "$hh*3600 + $mm*60 + $ss + $ff/$fps" | bc -l)
+
   echo "${total}"
 }
 
 
-################################################################################
-# 秒数（浮動小数点）をタイムコード(HH:MM:SS:FF)形式に変換する関数
+##############################################################
+# 秒数（小数）をタイムコード(HH:MM:SS:FF)形式に変換する関数
 # Globals:
 # Arguments:
-#   $1: ファイルパス
+#   $1: 秒数
 #   $2: FPS（整数）
 # Outputs:
-#   タイムコード（HH:MM:SS:FF）
-################################################################################
+#   タイムコード（HH:MM:SS.sss）
+##############################################################
 fn_sec2time() {
-  local total="$1"
-  local fps; fps="$2"
-  local hours; hours=$(echo "$total/3600" | bc -l | awk '{print int($1)}')
-  local rem; rem=$(echo "$total - ($hours * 3600)" | bc -l)
-  local minutes; minutes=$(echo "$rem/60" | bc -l | awk '{print int($1)}')
-  rem=$(echo "$rem - ($minutes * 60)" | bc -l)
-  local seconds; seconds=$(echo "$rem" | bc -l | awk '{print int($1)}')
-  local fractional
-  fractional=$(echo "$total - ($hours*3600 + $minutes*60 + $seconds)" | bc -l)
+  local sec="$1"
+  local fps="$2"
+  local hh
+  hh=$(echo "$sec/3600" | bc -l | awk '{print int($1)}')
+  local rem
+  rem=$(echo "$sec - ($hh * 3600)" | bc -l)
+  local mm
+  mm=$(echo "$rem/60" | bc -l | awk '{print int($1)}')
+  rem=$(echo "$rem - ($mm * 60)" | bc -l)
+  local ss
+  ss=$(echo "$rem" | bc -l | awk '{print int($1)}')
+  local ff
+  ff=$(echo "$sec - ($hh*3600 + $mm*60 + $ss)" | bc -l)
   local subsec
-  subsec=$(echo "$fractional * $fps" | bc -l | awk '{print int($1)}')
-  printf "%02d:%02d:%02d.%03d" "$hours" "$minutes" "$seconds" "$subsec"
+  subsec=$(echo "$ff * $fps" | bc -l | awk '{print int($1)}')
+  printf "%02d:%02d:%02d.%03d" "$hh" "$mm" "$ss" "$subsec"
 }
 
 
-################################################################################
+##############################################################
 # 指定した動画ファイルの平均ビットレートを取得
 # ffprobeでビットレート情報を取得できればその値を返す
 # 取得できなければ、ファイルサイズと再生時間から計算する
@@ -99,33 +105,33 @@ fn_sec2time() {
 #   $1: ファイルパス
 # Outputs:
 #   ビットレートbps（ビット毎秒）
-################################################################################
+##############################################################
 fn_get_avg_bitrate() {
   local file="$1"
 
-  # ファイル存在チェック -------------------------------------------------------
-  if [ ! -f "$file" ]; then
-    echo "Error: File not found: $file" >&2
-    return 1
-  fi
-
-  # ffprobeで全体のビットレートを取得（映像、音声などすべてのストリームを含む）
-  local bitrate; bitrate=$(ffprobe -v error -show_entries format=bit_rate \
+  # ffprobeで全体のビットレートを取得
+  # （映像、音声などすべてのストリームを含む）
+  local bitrate
+  bitrate=$(ffprobe -v error -show_entries format=bit_rate \
     -of default=noprint_wrappers=1:nokey=1 "$file")
   # ビットレート情報が取得できなかった場合、計算に切り替え
   if [ -z "$bitrate" ]; then
-    echo "Bitrate info not found, calculating using file size and duration." >&2
+    echo "Bitrate info not found." >&2
+    echo "calculating using file size and duration." >&2
 
     # ffprobeで再生時間を取得
-    local duration; duration=$(ffprobe -v error -show_entries format=duration \
+    local duration
+    duration=$(ffprobe -v error \
+      -show_entries format=duration \
       -of default=noprint_wrappers=1:nokey=1 "$file")
     if [ -z "$duration" ] || [ "$duration" = "0" ]; then
-      echo "Error: Unable to determine duration for file: $file" >&2
+      echo "Unable to determine duration for file: $file" >&2
       return 1
     fi
     # wc -c でファイルサイズ（バイト単位）を取得
     local size; size=$(wc -c < "$file")
-    # 平均ビットレートの計算： (ファイルサイズ[バイト] × 8) / 再生時間[秒]
+    # 平均ビットレートの計算
+    # (ファイルサイズ[byte]*8)/再生時間[秒]
     bitrate=$(echo "scale=0; ($size * 8) / $duration" | bc)
   fi
 
@@ -135,27 +141,22 @@ AVG_BITRATE=$(fn_get_avg_bitrate "$INPUT")
 echo "平均ビットレート: ${AVG_BITRATE} bps"
 
 
-################################################################################
+##############################################################
 # mp4動画の再生時間（秒）を取得する関数
 # Globals:
 # Arguments:
 #   $1: ファイルパス
 # Outputs:
 #   再生時間（秒）
-################################################################################
+##############################################################
 fn_get_duration() {
   local file="$1"
 
-  # ファイルの存在チェック -----------------------------------------------------
-  if [ ! -f "$file" ]; then
-    echo "Error: ファイルが存在しません: $file" >&2
-    return 1
-  fi
-
   # ffprobeを用いて再生時間を取得
-  local duration; duration=$(ffprobe -v error -select_streams v:0 \
-    -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 \
-    "$file")
+  local duration
+  duration=$(ffprobe -v error -select_streams v:0 \
+    -show_entries format=duration \
+    -of default=noprint_wrappers=1:nokey=1 "$file")
 
   if [ -z "$duration" ]; then
     echo "Error: 再生時間を取得できませんでした: $file" >&2
@@ -168,7 +169,7 @@ DURATION=$(fn_get_duration "$INPUT")
 echo "再生時間: ${DURATION} 秒"
 
 
-################################################################################
+##############################################################
 # 動画を指定したGB数ごとに分割するための秒数を求める関数
 # Globals:
 # Arguments:
@@ -177,18 +178,19 @@ echo "再生時間: ${DURATION} 秒"
 #   $3: 分割したいサイズ (GB、少数可)
 # Outputs:
 #   分割すべき秒数をスペース区切りの文字列で出力する
-################################################################################
+##############################################################
 fn_get_split_points() {
   local bitrate="$1"
   local duration="$2"
   local split_gb="$3"
 
-  # 分割サイズ（GB）をバイトに変換し、ビットに換算（awkで少数計算）
+  # 分割サイズ（GB）をバイトに変換し、ビットに換算
   local target_bits
   target_bits=$(awk -v \
     gb="$split_gb" 'BEGIN { printf "%.0f", gb * 1024 * 1024 * 1024 * 8 }')
 
-  # セグメントごとの秒数を計算（浮動小数点数として計算、6桁の小数として出力）
+  # セグメントごとの秒数を計算
+  # （浮動小数点数として計算、6桁の小数として出力）
   local seg
   seg=$(awk -v tb="$target_bits" \
     -v bitrate="$bitrate" 'BEGIN { printf "%.6f", tb / bitrate }')
@@ -218,18 +220,20 @@ SPLIT_POINTS=$(fn_get_split_points "$AVG_BITRATE" "$DURATION" "$SPLIT_SIZE")
 echo "分割秒数: $SPLIT_POINTS"
 
 
-################################################################################
+##############################################################
 # ffprobeでFPSを取得し、整数に四捨五入して返す関数
 # Globals:
 # Arguments:
 #   $1: ファイルパス
 # Outputs:
 #   FPS（整数）
-################################################################################
+##############################################################
 fn_get_fps() {
   local file="$1"
-  local fps_raw; fps_raw=$(ffprobe -v error -select_streams v:0 \
-    -show_entries stream=r_frame_rate -of default=nw=1:nk=1 "$file")
+  local fps_raw;
+  fps_raw=$(ffprobe -v error -select_streams v:0 \
+    -show_entries stream=r_frame_rate \
+    -of default=nw=1:nk=1 "$file")
   local fps_float
   if [[ "$fps_raw" == *"/"* ]]; then
     local num; num=$(echo "$fps_raw" | cut -d'/' -f1)
@@ -246,33 +250,37 @@ FRAMERATE=$(fn_get_fps "$INPUT")
 echo "Using frame rate: ${FRAMERATE} fps"
 
 
-################################################################################
+##############################################################
 # 指定の時間から近いキーフレーム数を返す関数
 # Globals:
 # Arguments:
 #   $1: ファイルパス
 #   $2: シークしたい時刻（秒）
-#   $3 = シーク開始から何秒前からキーフレームを探すか（秒）：デフォルトは10秒
+#   $3: シーク開始から何秒前からキーフレームを探すか（秒）
+#       デフォルトは10秒
 # Outputs:
-#   シークしたい時刻以下で最大のキーフレームのタイムスタンプ（秒）
-################################################################################
+#   シークしたい時刻で最大キーフレームのタイムスタンプ（秒）
+##############################################################
 fn_get_seek_keyframe() {
   setopt localoptions
   setopt shwordsplit
   local file="$1"
   local desired_sec="$2"
   local before_sec="${3:-10}"
-  local read_sec; read_sec=$(echo "$before_sec * 2" | bc -l)
-  local start_sec; start_sec=$(echo "$desired_sec - $before_sec" | bc -l)
+  local read_sec
+  read_sec=$(echo "$before_sec * 2" | bc -l)
+  local start_sec
+  start_sec=$(echo "$desired_sec - $before_sec" | bc -l)
   local keyframes
 
   keyframes=$(ffprobe -v error -i "$file"\
     -skip_frame nokey \
     -read_intervals "${start_sec}%+${read_sec}" \
     -select_streams v:0 \
-    -show_frames -show_entries frame=pts_time -of compact=p=0:nk=1)
+    -show_frames -show_entries \
+    frame=pts_time -of compact=p=0:nk=1)
 
-  # 指定時刻以下の最大のタイムスタンプ（シーク時に選ばれるキーフレーム）を求める
+  # 指定時刻以下の最大のタイムスタンプを求める
   local selected_frame=0
   local OLD_IFS=$IFS
   IFS=$'\n'
@@ -299,9 +307,9 @@ if [ "${TIMECODE}" != "" ]; then
   echo "元のタイムコードを秒に変換: ${TIMECODE_SEC} 秒"
 fi
 
-################################################################################
+##############################################################
 # MAIN
-################################################################################
+##############################################################
 # 分割秒数ごとに一番近いキーフレームに変換する
 # ${(z)SPLIT_POINTS} でスペース区切りの変数を配列に変換
 SPLIT_KEYFRAMES=(0) # 配列（最初のINDEXに0秒を入れる）
