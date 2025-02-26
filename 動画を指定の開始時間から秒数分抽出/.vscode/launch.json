@@ -11,7 +11,7 @@
       "program": "${file}",
       "cwd": "${HOME}/Downloads/camera",
       "args": [
-        "${HOME}/Downloads/camera/DJI_20250221160922_甲府駅からパレスヤマニ.MP4",
+        "${HOME}/Downloads/camera/input.mp4",
         "00:10:00",
         "60"
       ]
