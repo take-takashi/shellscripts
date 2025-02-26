@@ -2,6 +2,7 @@
 
 ショートカットappで使うshell scriptを集めたもの
 
-## TODO
+## 参考URL
 
-- shell-checkで確認
+- [GoogleのShell Style Guideの邦訳](https://qiita.com/yabeenico/items/72b904d4bb0b6d732a86)
+

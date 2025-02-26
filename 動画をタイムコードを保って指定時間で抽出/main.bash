@@ -1,13 +1,17 @@
 #!/bin/env zsh
 
+# shellcheck disable=SC1090
 source ~/.zshrc
 
 # shwordsplit オプションを有効化（zshのみ）
-setopt shwordsplit
+# setopt shwordsplit
 
+# 引数 =========================================================================
 # $1 = ファイルパス
-# $2 = 開始時間（HH:MM:SS）
-# $3 = 秒数（S）
+# $2 = 何GBごとに分割するか（例：4.8 とすると4.8GB）
+
+INPUT="$1"
+SPLIT_SIZE="$2"
 
 # 引数の分解
 readonly FILE="$1"
@@ -16,8 +20,6 @@ readonly BASE="${FILE##*/}"
 readonly EXT="${FILE##*.}"
 readonly STEM="${FILE%.*}"
 echo -e "file=${FILE}\ndir=${DIR}\nbase=${BASE}\next=${EXT}\nstem=${STEM}"
-
-INPUT="$1"
 
 ################################################################################
 # 動画ファイルのタイムコードを取得する関数
@@ -98,7 +100,7 @@ fn_sec2time() {
 # Outputs:
 #   ビットレートbps（ビット毎秒）
 ################################################################################
-get_avg_bitrate() {
+fn_get_avg_bitrate() {
   local file="$1"
 
   # ファイル存在チェック -------------------------------------------------------
@@ -129,7 +131,7 @@ get_avg_bitrate() {
 
   echo "${bitrate}"
 }
-AVG_BITRATE=$(get_avg_bitrate "$INPUT")
+AVG_BITRATE=$(fn_get_avg_bitrate "$INPUT")
 echo "平均ビットレート: ${AVG_BITRATE} bps"
 
 
@@ -141,7 +143,7 @@ echo "平均ビットレート: ${AVG_BITRATE} bps"
 # Outputs:
 #   再生時間（秒）
 ################################################################################
-get_duration() {
+fn_get_duration() {
   local file="$1"
 
   # ファイルの存在チェック -----------------------------------------------------
@@ -162,7 +164,7 @@ get_duration() {
 
   echo "${duration}"
 }
-DURATION=$(get_duration "$INPUT")
+DURATION=$(fn_get_duration "$INPUT")
 echo "再生時間: ${DURATION} 秒"
 
 
@@ -176,7 +178,7 @@ echo "再生時間: ${DURATION} 秒"
 # Outputs:
 #   分割すべき秒数をスペース区切りの文字列で出力する
 ################################################################################
-get_split_points() {
+fn_get_split_points() {
   local bitrate="$1"
   local duration="$2"
   local split_gb="$3"
@@ -212,7 +214,7 @@ get_split_points() {
 
   echo "${splits}"
 }
-SPLIT_POINTS=$(get_split_points "$AVG_BITRATE" "$DURATION" 4.8)
+SPLIT_POINTS=$(fn_get_split_points "$AVG_BITRATE" "$DURATION" "$SPLIT_SIZE")
 echo "分割秒数: $SPLIT_POINTS"
 
 
@@ -303,6 +305,7 @@ fi
 # 分割秒数ごとに一番近いキーフレームに変換する
 # ${(z)SPLIT_POINTS} でスペース区切りの変数を配列に変換
 SPLIT_KEYFRAMES=(0) # 配列（最初のINDEXに0秒を入れる）
+# shellcheck disable=SC2296
 for split_point in ${(z)SPLIT_POINTS}; do
   echo "分割秒数: $split_point"
   keyframe=$(fn_get_seek_keyframe "${INPUT}" "${split_point}")
@@ -317,7 +320,7 @@ do
   start_time="${SPLIT_KEYFRAMES[i]}"
   end_time="${SPLIT_KEYFRAMES[i+1]}"
 
-  output="${BASE}-part${i}.${EXT}"
+  output="${STEM}-part${i}.${EXT}"
   echo "分割${i}: ${start_time}秒 から ${end_time}秒 まで (${duration}秒)"
   echo "出力: ${output}"
 
@@ -358,10 +361,5 @@ do
 done
 
 echo "終了"
-
-# TODO ファイルに拡張子が2個入っている
-# TODO 関数名の統一化
-# TODO main関数の作成
-# TODO shell-checkで確認
 
 exit 0
